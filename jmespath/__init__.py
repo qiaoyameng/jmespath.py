@@ -1,4 +1,5 @@
 from jmespath import parser
+from jmespath.budget import ExecutionBudget
 from jmespath.visitor import Options
 
 __version__ = '1.1.0'

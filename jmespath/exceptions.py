@@ -120,3 +120,33 @@ class EmptyExpressionError(JMESPathError):
 
 class UnknownFunctionError(JMESPathError):
     pass
+
+
+@with_str_method
+class BudgetExceededError(JMESPathError):
+    def __init__(self, category, limit, used, usage, node_type,
+                 position, end_position=None, expression=None):
+        self.category = category
+        self.limit = limit
+        self.used = used
+        self.usage = usage
+        self.node_type = node_type
+        self.position = position
+        self.end_position = end_position
+        self.expression = expression
+        super(BudgetExceededError, self).__init__(
+            category, limit, used, node_type, position)
+
+    def __str__(self):
+        message = (
+            'Execution budget exceeded for %s: limit %s, used %s, '
+            'at %s node near column %s'
+        ) % (
+            self.category, self.limit, self.used,
+            self.node_type, self.position + 1
+        )
+        if self.expression is None:
+            return message
+        underline = ' ' * (self.position + 1) + '^'
+        return '%s for expression:\n"%s"\n%s' % (
+            message, self.expression, underline)

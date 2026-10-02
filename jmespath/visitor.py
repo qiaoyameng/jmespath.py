@@ -1,6 +1,7 @@
 import operator
 
 from jmespath import functions
+from jmespath.budget import ExecutionBudget, _BudgetMeter
 from jmespath.compat import string_type
 from numbers import Number
 
@@ -58,7 +59,8 @@ def _is_actual_number(x):
 
 class Options(object):
     """Options to control how a JMESPath function is evaluated."""
-    def __init__(self, dict_cls=None, custom_functions=None):
+    def __init__(self, dict_cls=None, custom_functions=None,
+                 execution_budget=None):
         #: The class to use when creating a dict.  The interpreter
         #  may create dictionaries during the evaluation of a JMESPath
         #  expression.  For example, a multi-select hash will
@@ -69,6 +71,11 @@ class Options(object):
         #  have predictable key ordering.
         self.dict_cls = dict_cls
         self.custom_functions = custom_functions
+        if (execution_budget is not None and
+                not isinstance(execution_budget, ExecutionBudget)):
+            raise TypeError(
+                'execution_budget must be an ExecutionBudget or None')
+        self.execution_budget = execution_budget
 
 
 class _Expression(object):
@@ -109,9 +116,11 @@ class TreeInterpreter(Visitor):
     _EQUALITY_OPS = ['eq', 'ne']
     MAP_TYPE = dict
 
-    def __init__(self, options=None):
+    def __init__(self, options=None, expression=None, node_positions=None):
         super(TreeInterpreter, self).__init__()
         self._dict_cls = self.MAP_TYPE
+        self._expression = expression
+        self._node_positions = node_positions
         if options is None:
             options = Options()
         self._options = options
@@ -121,6 +130,28 @@ class TreeInterpreter(Visitor):
             self._functions = self._options.custom_functions
         else:
             self._functions = functions.Functions()
+        self._budget = None
+        if options.execution_budget is not None:
+            self._budget = _BudgetMeter(options.execution_budget)
+
+    def visit(self, node, *args, **kwargs):
+        if self._budget is None:
+            return super(TreeInterpreter, self).visit(node, *args, **kwargs)
+        position, end_position = self._node_position(node)
+        self._budget.charge_visit(
+            node, position, end_position, self._expression)
+        result = super(TreeInterpreter, self).visit(node, *args, **kwargs)
+        self._budget.charge_result(
+            result, node, position, end_position, self._expression)
+        return result
+
+    def _node_position(self, node):
+        if self._node_positions is None:
+            return 0, None
+        position, end_position = self._node_positions.get(node, (0, None))
+        if position is None:
+            position = 0
+        return position, end_position
 
     def default_visit(self, node, *args, **kwargs):
         raise NotImplementedError(node['type'])

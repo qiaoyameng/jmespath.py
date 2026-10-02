@@ -101,6 +101,44 @@ of your dict keys.  To do this you can use either of these options:
     ...               jmespath.Options(dict_cls=collections.OrderedDict))
 
 
+Execution Budgets
+~~~~~~~~~~~~~~~~~
+
+You can limit the amount of work performed by a search with
+``jmespath.ExecutionBudget``.  A budget is optional and immutable; omitting it
+preserves the existing evaluation behavior.  Each search creates its own meter,
+so repeatedly or concurrently calling a compiled expression with the same
+options never shares consumed budget state.
+
+The two limits are:
+
+* ``node_evaluations``: AST node evaluations, including nodes evaluated inside
+  projections, filters, expression references, and function calls.
+* ``intermediate_elements``: Elements produced in intermediate arrays and
+  objects, including projection, flatten, multi-select, and function-returned
+  collections.
+
+When a limit is reached, evaluation raises
+``jmespath.exceptions.BudgetExceededError``.  The exception reports the
+exhausted category, both running totals, and the position of the node being
+evaluated.
+
+.. code:: python
+
+    >>> import jmespath
+    >>> options = jmespath.Options(
+    ...     execution_budget=jmespath.ExecutionBudget(
+    ...         node_evaluations=1000,
+    ...         intermediate_elements=10000))
+    >>> jmespath.search('records[*].email', data, options)
+
+Expression references continue evaluating in the interpreter that called the
+function, so functions such as ``map`` and ``sort_by`` share the search's
+meter.  Custom Python code inside a custom function is not interpreted as
+JMESPath nodes; collections supplied as arguments and collections returned from
+the function are counted at that function-call boundary.
+
+
 Custom Functions
 ~~~~~~~~~~~~~~~~
 
