@@ -120,3 +120,7 @@ class EmptyExpressionError(JMESPathError):
 
 class UnknownFunctionError(JMESPathError):
     pass
+
+
+class LazyEvaluationError(JMESPathError):
+    pass

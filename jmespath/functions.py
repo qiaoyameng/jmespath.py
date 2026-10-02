@@ -42,6 +42,62 @@ def signature(*arguments):
     return _record_signature
 
 
+class LazyArgument(object):
+    """A handle for a lazily evaluated function argument.
+
+    The handle captures the interpreter (and its options), the AST
+    node of the argument, and the data value in effect at the call
+    site.  The argument expression is only evaluated when resolve()
+    is called.  Resolving multiple times evaluates the expression at
+    most once: the produced value, or the raised exception, is
+    memoized and replayed on subsequent calls.  A handle is only
+    valid for the duration of the function call it was created for;
+    resolving it after the function has returned raises
+    LazyEvaluationError.
+    """
+    _PENDING = object()
+
+    def __init__(self, interpreter, node, value):
+        self._interpreter = interpreter
+        self._node = node
+        self._value = value
+        self._state = self._PENDING
+        self._validator = None
+        self._expired = False
+
+    def _set_validator(self, validator):
+        self._validator = validator
+
+    def _expire(self):
+        self._expired = True
+        self._interpreter = None
+
+    def resolve(self):
+        """Evaluate the argument expression and return its value.
+
+        The expression is evaluated at most once per handle.  If
+        evaluation raised an exception, the same exception is
+        re-raised on every subsequent call.
+        """
+        if self._expired:
+            raise exceptions.LazyEvaluationError(
+                "Cannot resolve a lazy argument outside of the "
+                "function call it was passed to.")
+        if self._state is self._PENDING:
+            try:
+                value = self._interpreter.visit(self._node, self._value)
+                if self._validator is not None:
+                    self._validator(value)
+            except Exception as e:
+                self._state = ('error', e)
+                raise
+            self._state = ('value', value)
+        kind, payload = self._state
+        if kind == 'error':
+            raise payload
+        return payload
+
+
 class FunctionRegistry(type):
     def __init__(cls, name, bases, attrs):
         cls._populate_function_table()
@@ -78,7 +134,41 @@ class Functions(metaclass=FunctionRegistry):
         function = spec['function']
         signature = spec['signature']
         self._validate_arguments(resolved_args, signature, function_name)
-        return function(self, *resolved_args)
+        lazy_args = self._bind_lazy_arguments(
+            resolved_args, signature, function_name)
+        try:
+            return function(self, *resolved_args)
+        finally:
+            for lazy_arg in lazy_args:
+                lazy_arg._expire()
+
+    def lazy_parameter_indices(self, function_name):
+        spec = self.FUNCTION_TABLE.get(function_name)
+        if spec is None:
+            return ()
+        return tuple(
+            i for i, entry in enumerate(spec['signature'])
+            if entry.get('lazy'))
+
+    def _bind_lazy_arguments(self, resolved_args, signature, function_name):
+        lazy_args = []
+        for i in range(len(signature)):
+            entry = signature[i]
+            if not entry.get('lazy'):
+                continue
+            if i >= len(resolved_args):
+                break
+            arg = resolved_args[i]
+            if not isinstance(arg, LazyArgument):
+                continue
+            allowed_types = entry['types']
+            if allowed_types:
+                def validator(value, allowed_types=allowed_types):
+                    self._type_check_single(
+                        value, allowed_types, function_name)
+                arg._set_validator(validator)
+            lazy_args.append(arg)
+        return lazy_args
 
     def _validate_arguments(self, args, signature, function_name):
         if signature and signature[-1].get('variadic'):
@@ -92,6 +182,10 @@ class Functions(metaclass=FunctionRegistry):
 
     def _type_check(self, actual, signature, function_name):
         for i in range(len(signature)):
+            if signature[i].get('lazy'):
+                # Lazy arguments are type checked when (and if)
+                # they are resolved.
+                continue
             allowed_types = signature[i]['types']
             if allowed_types:
                 self._type_check_single(actual[i], allowed_types,

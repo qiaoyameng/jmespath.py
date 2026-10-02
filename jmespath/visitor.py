@@ -165,9 +165,13 @@ class TreeInterpreter(Visitor):
 
     def visit_function_expression(self, node, value):
         resolved_args = []
-        for child in node['children']:
-            current = self.visit(child, value)
-            resolved_args.append(current)
+        lazy_indices = self._functions.lazy_parameter_indices(node['value'])
+        for index, child in enumerate(node['children']):
+            if index in lazy_indices:
+                resolved_args.append(
+                    functions.LazyArgument(self, child, value))
+            else:
+                resolved_args.append(self.visit(child, value))
         return self._functions.call_function(node['value'], resolved_args)
 
     def visit_filter_projection(self, node, value):
