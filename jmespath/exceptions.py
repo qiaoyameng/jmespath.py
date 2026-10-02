@@ -120,3 +120,11 @@ class EmptyExpressionError(JMESPathError):
 
 class UnknownFunctionError(JMESPathError):
     pass
+
+
+class StreamUnsupportedError(JMESPathError):
+    def __init__(self, expression):
+        self.expression = expression
+        super(StreamUnsupportedError, self).__init__(
+            "Expression is not supported by stream_search: %s"
+            % expression)

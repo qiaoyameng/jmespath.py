@@ -10,3 +10,8 @@ def compile(expression):
 
 def search(expression, data, options=None):
     return parser.Parser().parse(expression).search(data, options=options)
+
+
+def stream_search(expression, data, options=None):
+    return parser.Parser().parse(expression).stream_search(
+        data, options=options)

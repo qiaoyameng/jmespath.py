@@ -516,6 +516,11 @@ class ParsedResult(object):
         result = interpreter.visit(self.parsed, value)
         return result
 
+    def stream_search(self, data, options=None):
+        from jmespath import stream
+        plan = stream.compile_stream_plan(self.parsed, self.expression)
+        return stream.stream_search_plan(plan, data, options=options)
+
     def _render_dot_file(self):
         """Render the parsed AST as a dot file.
 
