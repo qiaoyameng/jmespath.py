@@ -119,12 +119,25 @@ class Parser(object):
         self.tokenizer = lexer.Lexer().tokenize(expression)
         self._tokens = list(self.tokenizer)
         self._index = 0
-        parsed = self._expression(binding_power=0)
+        parsed = self._set_node_position(
+            self._expression(binding_power=0),
+            self._tokens[0],
+            self._tokens[self._index])
         if not self._current_token() == 'eof':
             t = self._lookahead_token(0)
             raise exceptions.ParseError(t['start'], t['value'], t['type'],
                                         "Unexpected token: %s" % t['value'])
         return ParsedResult(expression, parsed)
+
+    def _set_node_position(self, node, start_token=None, end_token=None,
+                           overwrite=False):
+        start = getattr(node, 'start', None)
+        end = getattr(node, 'end', None)
+        if start is None or overwrite:
+            node.start = start_token['start']
+        if end is None or overwrite:
+            node.end = end_token['end']
+        return node
 
     def _expression(self, binding_power=0):
         left_token = self._lookahead_token(0)
@@ -135,6 +148,7 @@ class Parser(object):
         left = nud_function(left_token)
         current_token = self._current_token()
         while binding_power < self.BINDING_POWER[current_token]:
+            start_token = self._lookahead_token(0)
             led = getattr(self, '_token_led_%s' % current_token, None)
             if led is None:
                 error_token = self._lookahead_token(0)
@@ -142,7 +156,11 @@ class Parser(object):
             else:
                 self._advance()
                 left = led(left)
+                end_index = max(self._index, 0)
+                self._set_node_position(
+                    left, start_token, self._tokens[end_index])
                 current_token = self._current_token()
+        self._set_node_position(left, left_token, self._tokens[self._index])
         return left
 
     def _token_nud_literal(self, token):
@@ -168,10 +186,16 @@ class Parser(object):
             right = ast.identity()
         else:
             right = self._parse_projection_rhs(self.BINDING_POWER['star'])
-        return ast.value_projection(left, right)
+        node = ast.value_projection(left, right)
+        node.start = token['start']
+        node.end = self._tokens[self._index]['end']
+        return node
 
     def _token_nud_filter(self, token):
-        return self._token_led_filter(ast.identity())
+        node = self._token_led_filter(ast.identity())
+        node.start = token['start']
+        node.end = self._tokens[self._index]['end']
+        return node
 
     def _token_nud_lbrace(self, token):
         return self._parse_multi_select_hash()
@@ -185,7 +209,10 @@ class Parser(object):
         left = ast.flatten(ast.identity())
         right = self._parse_projection_rhs(
             self.BINDING_POWER['flatten'])
-        return ast.projection(left, right)
+        node = ast.projection(left, right)
+        node.start = token['start']
+        node.end = self._tokens[self._index]['end']
+        return node
 
     def _token_nud_not(self, token):
         expr = self._expression(self.BINDING_POWER['not'])
@@ -194,17 +221,23 @@ class Parser(object):
     def _token_nud_lbracket(self, token):
         if self._current_token() in ['number', 'colon']:
             right = self._parse_index_expression()
+            self._set_node_position(right, token, self._lookahead_token(0))
             # We could optimize this and remove the identity() node.
             # We don't really need an index_expression node, we can
             # just use emit an index node here if we're not dealing
             # with a slice.
-            return self._project_if_slice(ast.identity(), right)
+            projected = self._project_if_slice(ast.identity(), right)
+            self._set_node_position(projected, token, self._lookahead_token(0))
+            return projected
         elif self._current_token() == 'star' and \
                 self._lookahead(1) == 'rbracket':
             self._advance()
             self._advance()
             right = self._parse_projection_rhs(self.BINDING_POWER['star'])
-            return ast.projection(ast.identity(), right)
+            node = ast.projection(ast.identity(), right)
+            node.start = token['start']
+            node.end = self._tokens[self._index]['end']
+            return node
         else:
             return self._parse_multi_select_list()
 
@@ -213,15 +246,18 @@ class Parser(object):
         # [<current>
         #  ^
         #  | current token
+        start_token = self._lookahead_token(0)
         if (self._lookahead(0) == 'colon' or
                 self._lookahead(1) == 'colon'):
-            return self._parse_slice_expression()
+            node = self._parse_slice_expression()
         else:
             # Parse the syntax [number]
             node = ast.index(self._lookahead_token(0)['value'])
             self._advance()
             self._match('rbracket')
-            return node
+        self._set_node_position(
+            node, start_token, self._tokens[self._index - 1])
+        return node
 
     def _parse_slice_expression(self):
         # [start:end:step]
@@ -299,6 +335,8 @@ class Parser(object):
             args.append(expression)
         self._match('rparen')
         function_node = ast.function_expression(name, args)
+        function_node.start = left.start
+        function_node.end = self._lookahead_token(-1)['end']
         return function_node
 
     def _token_led_filter(self, left):
@@ -391,6 +429,7 @@ class Parser(object):
             self._match('colon')
             value = self._expression(0)
             node = ast.key_val_pair(key_name=key_name, node=value)
+            self._set_node_position(node, key_token, self._lookahead_token(0))
             pairs.append(node)
             if self._current_token() == 'comma':
                 self._match('comma')
@@ -512,7 +551,7 @@ class ParsedResult(object):
         self.parsed = parsed
 
     def search(self, value, options=None):
-        interpreter = visitor.TreeInterpreter(options)
+        interpreter = visitor.TreeInterpreter(options, self.expression)
         result = interpreter.visit(self.parsed, value)
         return result
 

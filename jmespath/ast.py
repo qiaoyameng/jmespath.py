@@ -2,89 +2,107 @@
 # {"type": <node type>", children: [], "value": ""}
 
 
+class ASTNode(dict):
+    def __init__(self, *args, **kwargs):
+        super(ASTNode, self).__init__(*args, **kwargs)
+        self.start = None
+        self.end = None
+
+
+_UNSET = object()
+
+
+def _node(node_type, children=None, value=_UNSET):
+    node = ASTNode({'type': node_type,
+                    'children': [] if children is None else children})
+    if value is not _UNSET:
+        node['value'] = value
+    return node
+
+
 def comparator(name, first, second):
-    return {'type': 'comparator', 'children': [first, second], 'value': name}
+    return _node('comparator', [first, second], name)
 
 
 def current_node():
-    return {'type': 'current', 'children': []}
+    return _node('current')
 
 
 def expref(expression):
-    return {'type': 'expref', 'children': [expression]}
+    return _node('expref', [expression])
 
 
 def function_expression(name, args):
-    return {'type': 'function_expression', 'children': args, 'value': name}
+    return _node('function_expression', args, name)
 
 
 def field(name):
-    return {"type": "field", "children": [], "value": name}
+    return _node('field', value=name)
 
 
 def filter_projection(left, right, comparator):
-    return {'type': 'filter_projection', 'children': [left, right, comparator]}
+    return _node('filter_projection', [left, right, comparator])
 
 
 def flatten(node):
-    return {'type': 'flatten', 'children': [node]}
+    return _node('flatten', [node])
 
 
 def identity():
-    return {"type": "identity", 'children': []}
+    return _node('identity')
 
 
 def index(index):
-    return {"type": "index", "value": index, "children": []}
+    return _node('index', value=index)
 
 
 def index_expression(children):
-    return {"type": "index_expression", 'children': children}
+    return _node('index_expression', children)
 
 
 def key_val_pair(key_name, node):
-    return {"type": "key_val_pair", 'children': [node], "value": key_name}
+    return _node('key_val_pair', [node], key_name)
 
 
 def literal(literal_value):
-    return {'type': 'literal', 'value': literal_value, 'children': []}
+    return _node('literal', value=literal_value)
 
 
 def multi_select_dict(nodes):
-    return {"type": "multi_select_dict", "children": nodes}
+    return _node('multi_select_dict', nodes)
 
 
 def multi_select_list(nodes):
-    return {"type": "multi_select_list", "children": nodes}
+    return _node('multi_select_list', nodes)
 
 
 def or_expression(left, right):
-    return {"type": "or_expression", "children": [left, right]}
+    return _node('or_expression', [left, right])
 
 
 def and_expression(left, right):
-    return {"type": "and_expression", "children": [left, right]}
+    return _node('and_expression', [left, right])
 
 
 def not_expression(expr):
-    return {"type": "not_expression", "children": [expr]}
+    return _node('not_expression', [expr])
 
 
 def pipe(left, right):
-    return {'type': 'pipe', 'children': [left, right]}
+    return _node('pipe', [left, right])
 
 
 def projection(left, right):
-    return {'type': 'projection', 'children': [left, right]}
+    return _node('projection', [left, right])
 
 
 def subexpression(children):
-    return {"type": "subexpression", 'children': children}
+    return _node('subexpression', children)
 
 
 def slice(start, end, step):
-    return {"type": "slice", "children": [start, end, step]}
+    return _node('slice', [start, end, step])
 
 
 def value_projection(left, right):
-    return {'type': 'value_projection', 'children': [left, right]}
+    return _node('value_projection', [left, right])

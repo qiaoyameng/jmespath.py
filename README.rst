@@ -101,6 +101,45 @@ of your dict keys.  To do this you can use either of these options:
     ...               jmespath.Options(dict_cls=collections.OrderedDict))
 
 
+Execution Budgets
+~~~~~~~~~~~~~~~~~
+
+You can use an ``ExecutionBudget`` to bound the work performed by a
+search.  Budgets are optional; searches without one keep
+their existing behavior and performance characteristics.
+
+``max_nodes`` limits the number of AST nodes evaluated, including nodes
+inside projections, filters, expression references, and built-in and
+custom function calls.  ``max_collection_elements`` limits the total
+number of top-level elements in intermediate collections, including
+projection inputs and outputs, flattened lists, slices, multi-selects,
+and collection arguments and results at function boundaries.
+
+.. code:: python
+
+    import jmespath
+
+    options = jmespath.Options(
+        execution_budget=jmespath.ExecutionBudget(
+            max_nodes=1000,
+            max_collection_elements=10000))
+    jmespath.search('records[*].tags[*]', data, options=options)
+
+When a budget is exceeded, the search raises
+``jmespath.exceptions.BudgetExceededError``.  The exception identifies
+the exhausted category, its limit, the amount used, and the expression
+location and AST node that exceeded the budget.  A compiled expression
+creates a private meter for each search, so concurrent searches with the
+same compiled expression and options do not share budget state.
+
+For custom functions, collection arguments and collection return values
+are metered once at the function boundary.  Expression references used
+by a custom function continue to use the same meter as the surrounding
+search; the meter is never reset when an expression reference is called.
+Budget errors remain raised even if the custom function catches the
+underlying exception.
+
+
 Custom Functions
 ~~~~~~~~~~~~~~~~
 

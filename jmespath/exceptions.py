@@ -112,6 +112,30 @@ class JMESPathTypeError(JMESPathError):
                     self.expected_types, self.actual_type))
 
 
+@with_str_method
+class BudgetExceededError(JMESPathError):
+    def __init__(self, category, limit, usage, expression=None,
+                 position=None, node_type=None):
+        self.category = category
+        self.limit = limit
+        self.usage = usage
+        self.expression = expression
+        self.position = position
+        self.node_type = node_type
+        super(BudgetExceededError, self).__init__(
+            category, limit, usage, expression, position, node_type)
+
+    def __str__(self):
+        location = ''
+        if self.position is not None:
+            location = ' at column %s' % self.position
+            if self.node_type is not None:
+                location += ' (%s)' % self.node_type
+        return (
+            'Execution budget exceeded for %s: limit %s, used %s%s' % (
+                self.category, self.limit, self.usage, location))
+
+
 class EmptyExpressionError(JMESPathError):
     def __init__(self):
         super(EmptyExpressionError, self).__init__(
