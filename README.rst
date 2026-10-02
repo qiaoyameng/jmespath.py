@@ -79,6 +79,26 @@ This is useful if you're going to use the same jmespath expression to
 search multiple documents.  This avoids having to reparse the
 JMESPath expression each time you search a new document.
 
+Named bindings
+--------------
+
+You can reference explicit named parameters with a ``$`` prefix and provide
+their values through ``bindings``.  Bound values are treated as data, so
+strings containing quotes, backticks, or JMESPath syntax do not need escaping
+and are not parsed as expressions:
+
+.. code:: python
+
+    >>> import jmespath
+    >>> expression = 'items[?tenant == $tenant && amount >= $threshold]'
+    >>> jmespath.search(expression, data, bindings={
+    ...     'tenant': requested_tenant,
+    ...     'threshold': requested_threshold,
+    ... })
+
+Bindings only apply to that ``search`` call.  Omitting a binding raises an
+error while explicitly binding ``None`` supplies a JSON null value.
+
 Options
 -------
 

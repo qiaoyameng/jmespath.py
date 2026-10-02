@@ -4,6 +4,7 @@ from tests import unittest, OrderedDict
 
 import jmespath
 import jmespath.functions
+from jmespath import exceptions
 
 
 class TestSearchOptions(unittest.TestCase):
@@ -62,3 +63,88 @@ class TestPythonSpecificCases(unittest.TestCase):
         result = decimal.Decimal('3')
         self.assertEqual(jmespath.search('[?a >= `1`].a', [{'a': result}]),
                          [result])
+
+
+class TestSearchBindings(unittest.TestCase):
+    EXPRESSION = 'items[?tenant == $tenant && amount >= $threshold]'
+    DATA = {
+        'items': [
+            {'tenant': 'alpha', 'amount': 10},
+            {'tenant': 'alpha"\'`', 'amount': 20},
+            {'tenant': 'beta', 'amount': 30},
+        ]
+    }
+
+    def test_reuses_compilation_with_interleaved_bindings(self):
+        expression = jmespath.compile(self.EXPRESSION)
+        alpha_bindings = {'tenant': 'alpha"\'`', 'threshold': 15}
+        beta_bindings = {'tenant': 'beta', 'threshold': 25}
+
+        self.assertEqual(
+            expression.search(self.DATA, bindings=alpha_bindings),
+            [{'tenant': 'alpha"\'`', 'amount': 20}])
+        self.assertEqual(
+            expression.search(self.DATA, bindings=beta_bindings),
+            [{'tenant': 'beta', 'amount': 30}])
+        self.assertEqual(
+            expression.search(self.DATA,
+                               bindings={'tenant': 'alpha"\'`',
+                                         'threshold': 5}),
+            [{'tenant': 'alpha"\'`', 'amount': 20}])
+
+    def test_search_accepts_bindings(self):
+        self.assertEqual(
+            jmespath.search(self.EXPRESSION, self.DATA,
+                            bindings={'tenant': 'beta', 'threshold': 30}),
+            [{'tenant': 'beta', 'amount': 30}])
+
+    def test_missing_binding_is_distinct_from_null(self):
+        expression = jmespath.compile('foo == $value')
+
+        self.assertTrue(expression.search({'foo': None},
+                                          bindings={'value': None}))
+        with self.assertRaises(exceptions.MissingBindingError):
+            expression.search({'foo': None})
+        with self.assertRaises(KeyError):
+            expression.search({'foo': None})
+
+    def test_parameter_does_not_shadow_field(self):
+        expression = jmespath.compile('{field: value, parameter: $value}')
+
+        self.assertIsNone(jmespath.search('value', {},
+                                          bindings={'value': 'from-binding'}))
+        self.assertEqual(
+            expression.search({'value': 'from-data'},
+                              bindings={'value': 'from-binding'}),
+            {'field': 'from-data', 'parameter': 'from-binding'})
+
+    def test_binding_available_in_expression_reference(self):
+        expression = jmespath.compile(
+            'map(&[amount, $bonus], records)')
+
+        self.assertEqual(
+            expression.search({'records': [{'amount': 1}, {'amount': 2}]},
+                              bindings={'bonus': 10}),
+            [[1, 10], [2, 10]])
+
+    def test_binding_values_are_not_evaluated_as_expressions(self):
+        expression = jmespath.compile('value == $value')
+
+        self.assertTrue(
+            expression.search({'value': 'foo.bar | `injected`'},
+                              bindings={'value': 'foo.bar | `injected`'}))
+
+
+class TestBindingParser(unittest.TestCase):
+    def test_parameter_ast_is_cached_without_binding_values(self):
+        parsed_1 = jmespath.compile('foo == $bar')
+        parsed_2 = jmespath.compile('foo == $bar')
+
+        self.assertIs(parsed_1.parsed, parsed_2.parsed)
+        self.assertEqual(
+            parsed_1.parsed['children'][1],
+            {'type': 'parameter', 'children': [], 'value': 'bar'})
+
+    def test_parameter_cannot_be_function_name(self):
+        with self.assertRaises(exceptions.ParseError):
+            jmespath.compile('$foo(@)')

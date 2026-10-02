@@ -1,5 +1,6 @@
 import operator
 
+from jmespath import exceptions
 from jmespath import functions
 from jmespath.compat import string_type
 from numbers import Number
@@ -109,9 +110,10 @@ class TreeInterpreter(Visitor):
     _EQUALITY_OPS = ['eq', 'ne']
     MAP_TYPE = dict
 
-    def __init__(self, options=None):
+    def __init__(self, options=None, bindings=None):
         super(TreeInterpreter, self).__init__()
         self._dict_cls = self.MAP_TYPE
+        self._bindings = {} if bindings is None else bindings
         if options is None:
             options = Options()
         self._options = options
@@ -159,6 +161,13 @@ class TreeInterpreter(Visitor):
 
     def visit_current(self, node, value):
         return value
+
+    def visit_parameter(self, node, value):
+        name = node['value']
+        try:
+            return self._bindings[name]
+        except KeyError:
+            raise exceptions.MissingBindingError(name)
 
     def visit_expref(self, node, value):
         return _Expression(node['children'][0], self)

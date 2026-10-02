@@ -120,3 +120,12 @@ class EmptyExpressionError(JMESPathError):
 
 class UnknownFunctionError(JMESPathError):
     pass
+
+
+class MissingBindingError(JMESPathError, KeyError):
+    def __init__(self, name):
+        self.name = name
+        super(MissingBindingError, self).__init__(name)
+
+    def __str__(self):
+        return 'Missing binding for parameter "$%s".' % self.name

@@ -50,6 +50,20 @@ class TestRegexLexer(unittest.TestCase):
         self.assert_tokens(tokens, [{'type': 'quoted_identifier',
                                      'value': "foobar"}])
 
+    def test_parameter(self):
+        tokens = list(self.lexer.tokenize('$foobar'))
+        self.assert_tokens(tokens, [{'type': 'parameter',
+                                     'value': 'foobar'}])
+
+    def test_parameter_with_underscore(self):
+        tokens = list(self.lexer.tokenize('$_foo_bar1'))
+        self.assert_tokens(tokens, [{'type': 'parameter',
+                                     'value': '_foo_bar1'}])
+
+    def test_parameter_requires_identifier(self):
+        with self.assertRaises(LexerError):
+            list(self.lexer.tokenize('$1'))
+
     def test_json_escaped_value(self):
         tokens = list(self.lexer.tokenize('"\u2713"'))
         self.assert_tokens(tokens, [{'type': 'quoted_identifier',
@@ -130,6 +144,15 @@ class TestRegexLexer(unittest.TestCase):
              {'type': 'eof', 'value': '',
               'start': 7, 'end': 7},
              ]
+        )
+
+    def test_parameter_position(self):
+        tokens = list(self.lexer.tokenize('$foo'))
+        self.assertEqual(
+            tokens,
+            [{'type': 'parameter', 'value': 'foo',
+              'start': 0, 'end': 4},
+             {'type': 'eof', 'value': '', 'start': 4, 'end': 4}]
         )
 
     def test_adds_quotes_when_invalid_json(self):

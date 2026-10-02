@@ -62,6 +62,10 @@ def or_expression(left, right):
     return {"type": "or_expression", "children": [left, right]}
 
 
+def parameter(name):
+    return {"type": "parameter", "children": [], "value": name}
+
+
 def and_expression(left, right):
     return {"type": "and_expression", "children": [left, right]}
 

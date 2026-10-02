@@ -80,6 +80,8 @@ class Lexer(object):
                                      message="Unknown token '%s'" % buff)
             elif self._current == '"':
                 yield self._consume_quoted_identifier()
+            elif self._current == '$':
+                yield self._consume_parameter()
             elif self._current == '<':
                 yield self._match_or_else('=', 'lte', 'lt')
             elif self._current == '>':
@@ -188,6 +190,22 @@ class Lexer(object):
             raise LexerError(lexer_position=start,
                              lexer_value=lexeme,
                              message=error_message)
+
+    def _consume_parameter(self):
+        start = self._position
+        first_char = self._next()
+        if first_char not in self.START_IDENTIFIER:
+            raise LexerError(
+                lexer_position=start,
+                lexer_value=self._expression[start:],
+                message='Parameter names must start with a letter or '
+                        'underscore')
+        buff = first_char
+        while self._next() in self.VALID_IDENTIFIER:
+            buff += self._current
+        token_len = self._position - start
+        return {'type': 'parameter', 'value': buff,
+                'start': start, 'end': token_len + 1}
 
     def _consume_raw_string_literal(self):
         start = self._position
