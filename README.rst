@@ -79,6 +79,24 @@ This is useful if you're going to use the same jmespath expression to
 search multiple documents.  This avoids having to reparse the
 JMESPath expression each time you search a new document.
 
+A compiled expression can also report the fields it can access without
+evaluating the query or reading sample data:
+
+.. code:: python
+
+    >>> import jmespath
+    >>> expression = jmespath.compile('foo[*].bar || baz')
+    >>> expression.analyze_fields().to_dict()
+    {'possible': [...], 'unconditional': [...]}
+
+Each path is a list of field name segments.  The sentinels
+``{'type': 'any_field'}`` and ``{'type': 'any_index'}`` represent unknown
+object fields and array elements respectively.  ``possible`` contains every
+path that may be accessed on some input, while ``unconditional`` contains
+the subset that is reached before data-dependent branches such as filters,
+slices, projections, and short-circuit expressions.  Unknown custom
+functions conservatively cover all subfields of any ``@`` value they receive.
+
 Options
 -------
 

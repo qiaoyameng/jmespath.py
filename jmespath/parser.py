@@ -28,6 +28,7 @@ A few notes on the implementation.
 from jmespath import lexer
 from jmespath.compat import with_repr_method
 from jmespath import ast
+from jmespath import analysis
 from jmespath import exceptions
 from jmespath import visitor
 
@@ -515,6 +516,13 @@ class ParsedResult(object):
         interpreter = visitor.TreeInterpreter(options)
         result = interpreter.visit(self.parsed, value)
         return result
+
+    def analyze_fields(self):
+        """Return static field access information.
+
+        This does not evaluate the expression or call custom functions.
+        """
+        return analysis.analyze_fields(self.parsed)
 
     def _render_dot_file(self):
         """Render the parsed AST as a dot file.
