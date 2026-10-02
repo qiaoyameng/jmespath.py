@@ -165,9 +165,30 @@ class TreeInterpreter(Visitor):
 
     def visit_function_expression(self, node, value):
         resolved_args = []
-        for child in node['children']:
-            current = self.visit(child, value)
-            resolved_args.append(current)
+        signature = self._functions.get_function_signature(node['value'])
+        for index, child in enumerate(node['children']):
+            if signature is not None and index < len(signature):
+                argument_spec = signature[index]
+            elif signature is not None and signature and signature[-1].get(
+                    'variadic'):
+                argument_spec = signature[-1]
+            else:
+                argument_spec = None
+            if argument_spec is not None and functions.is_lazy_argument(
+                    argument_spec):
+                current = self._functions.create_lazy_argument(
+                    self.visit, value, self._options, child,
+                    node['value'], argument_spec, index)
+                resolved_args.append(current)
+            else:
+                try:
+                    current = self.visit(child, value)
+                except Exception:
+                    for resolved_arg in resolved_args:
+                        if isinstance(resolved_arg, functions.LazyArgument):
+                            resolved_arg.close()
+                    raise
+                resolved_args.append(current)
         return self._functions.call_function(node['value'], resolved_args)
 
     def visit_filter_projection(self, node, value):

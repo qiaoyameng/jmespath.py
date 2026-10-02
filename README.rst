@@ -156,6 +156,18 @@ Below are a few examples:
         def _func_my_add(self, x, y):
             return x + y
 
+        # Add ``'lazy': True`` when the function should receive a handle
+        # instead of the resolved argument.  Calling ``evaluate()``
+        # resolves the argument against the current value, and repeated
+        # calls reuse the first result or exception.  Handles become
+        # invalid when the enclosing function returns.
+        @functions.signature({'types': ['boolean']},
+                             {'types': [], 'lazy': True},
+                             {'types': [], 'lazy': True})
+        def _func_choose(self, condition, when_true, when_false):
+            selected = when_true if condition else when_false
+            return selected.evaluate()
+
     # 4. Provide an instance of your subclass in a Options object.
     options = jmespath.Options(custom_functions=CustomFunctions())
 

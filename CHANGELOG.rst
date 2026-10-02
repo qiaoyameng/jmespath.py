@@ -1,7 +1,7 @@
 Next Release (TBD)
 ==================
 
-* No changes yet.
+* Add lazy custom function arguments.
 
 
 1.1.0

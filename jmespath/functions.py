@@ -1,5 +1,6 @@
 import math
 import json
+import threading
 
 from jmespath import exceptions
 from jmespath.compat import string_type as STRING_TYPE
@@ -42,6 +43,81 @@ def signature(*arguments):
     return _record_signature
 
 
+class LazyArgument(object):
+    def __init__(self, evaluator, current_value, options, node, validator,
+                 function_name, argument_index, argument_spec):
+        self._evaluator = evaluator
+        self._validator = validator
+        self._lock = threading.RLock()
+        self._has_result = False
+        self._result = None
+        self._exception = None
+        self._closed = False
+        self.current_value = current_value
+        self.data = current_value
+        self.options = options
+        self.node = node
+        self.expression = node
+        self.argument_node = node
+        self.function_name = function_name
+        self.argument_index = argument_index
+        self.argument_spec = argument_spec
+        self.argument = argument_spec
+        self.binding = argument_spec
+
+    def evaluate(self):
+        with self._lock:
+            if self._closed:
+                raise RuntimeError(
+                    'Lazy argument for function %s() can only be evaluated '
+                    'during that function call.' % self.function_name)
+            if self._exception is not None:
+                raise self._exception
+            if self._has_result:
+                return self._result
+            try:
+                result = self._evaluator(self.node, self.current_value)
+                self._validator(result)
+            except Exception as exc:
+                self._exception = exc
+                raise
+            self._result = result
+            self._has_result = True
+            return result
+
+    def close(self):
+        with self._lock:
+            self._closed = True
+            self._evaluator = None
+            self._validator = None
+            self.current_value = None
+            self.data = None
+            self.node = None
+            self.expression = None
+            self.argument_node = None
+            self._result = None
+            self._has_result = False
+
+    resolve = evaluate
+    eval = evaluate
+    force = evaluate
+    get = evaluate
+    value = evaluate
+
+    def __call__(self):
+        return self.evaluate()
+
+
+DeferredArgument = LazyArgument
+_LazyArgument = LazyArgument
+
+
+def is_lazy_argument(argument_spec):
+    return bool(argument_spec.get('lazy') or
+                argument_spec.get('deferred') or
+                argument_spec.get('defer'))
+
+
 class FunctionRegistry(type):
     def __init__(cls, name, bases, attrs):
         cls._populate_function_table()
@@ -77,8 +153,32 @@ class Functions(metaclass=FunctionRegistry):
                 "Unknown function: %s()" % function_name)
         function = spec['function']
         signature = spec['signature']
-        self._validate_arguments(resolved_args, signature, function_name)
-        return function(self, *resolved_args)
+        lazy_args = [arg for arg in resolved_args
+                     if isinstance(arg, LazyArgument)]
+        try:
+            self._validate_arguments(resolved_args, signature, function_name)
+            return function(self, *resolved_args)
+        finally:
+            for lazy_arg in lazy_args:
+                lazy_arg.close()
+
+    def get_function_signature(self, function_name):
+        try:
+            return self.FUNCTION_TABLE[function_name]['signature']
+        except KeyError:
+            return None
+
+    def create_lazy_argument(self, evaluator, current_value, options, node,
+                             function_name, argument_spec, argument_index):
+        def validate(result):
+            allowed_types = argument_spec.get('types', [])
+            if allowed_types:
+                self._type_check_single(result, allowed_types,
+                                        function_name)
+
+        return LazyArgument(
+            evaluator, current_value, options, node, validate,
+            function_name, argument_index, argument_spec)
 
     def _validate_arguments(self, args, signature, function_name):
         if signature and signature[-1].get('variadic'):
@@ -92,6 +192,8 @@ class Functions(metaclass=FunctionRegistry):
 
     def _type_check(self, actual, signature, function_name):
         for i in range(len(signature)):
+            if isinstance(actual[i], LazyArgument):
+                continue
             allowed_types = signature[i]['types']
             if allowed_types:
                 self._type_check_single(actual[i], allowed_types,
