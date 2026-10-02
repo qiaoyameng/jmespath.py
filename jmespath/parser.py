@@ -516,6 +516,13 @@ class ParsedResult(object):
         result = interpreter.visit(self.parsed, value)
         return result
 
+    def analyze_fields(self):
+        from jmespath.analysis import FieldAccessAnalyzer
+        return FieldAccessAnalyzer().analyze(self.parsed)
+
+    def analyze_field_accesses(self):
+        return self.analyze_fields()
+
     def _render_dot_file(self):
         """Render the parsed AST as a dot file.
 

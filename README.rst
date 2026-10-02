@@ -79,6 +79,35 @@ This is useful if you're going to use the same jmespath expression to
 search multiple documents.  This avoids having to reparse the
 JMESPath expression each time you search a new document.
 
+Field Access Analysis
+---------------------
+
+A compiled expression can report the fields it may need without
+evaluating the expression or reading sample data:
+
+.. code:: python
+
+    >>> result = jmespath.compile('people[?age > `18`].name').analyze_fields()
+    >>> result['possible_paths']
+    [[{'type': 'field', 'name': 'people'}],
+     [{'type': 'field', 'name': 'people'}, {'type': 'field', 'name': 'age'}],
+     [{'type': 'field', 'name': 'people'}, {'type': 'field', 'name': 'name'}]]
+    >>> result['unconditional_paths']
+    [[{'type': 'field', 'name': 'people'}],
+     [{'type': 'field', 'name': 'people'}, {'type': 'field', 'name': 'age'}]]
+
+``possible_paths`` is a conservative set that also includes paths reached by
+projections, filters, logical short-circuiting, or unknown custom functions.
+``unconditional_paths`` is the subset of paths the expression must read
+before those data-dependent decisions.
+
+Field names are always represented by structured path segments.  This keeps
+quoted names containing dots distinct from path separators.  Other segment
+types are ``any_field`` and ``any_descendant_fields``; the latter means the
+analysis cannot prove which descendants are needed.  In particular, passing
+``@`` to an unknown custom function reports arbitrary descendant access.
+Static analysis never invokes custom functions.
+
 Options
 -------
 
