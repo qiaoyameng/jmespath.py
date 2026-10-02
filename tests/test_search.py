@@ -62,3 +62,103 @@ class TestPythonSpecificCases(unittest.TestCase):
         result = decimal.Decimal('3')
         self.assertEqual(jmespath.search('[?a >= `1`].a', [{'a': result}]),
                          [result])
+
+
+class TestSearchTrace(unittest.TestCase):
+    EXPRESSION = (
+        'items[?probe_left(active) || probe_right(included)].'
+        'owner.name'
+    )
+
+    def setUp(self):
+        self.data = {
+            'items': [
+                {'active': True, 'owner': {'name': 'first'}},
+                {'active': False, 'included': False,
+                 'owner': {'name': 'filtered'}},
+                {'active': False, 'included': True,
+                 'owner': {'name': 'second'}},
+                {'active': True, 'owner': {'name': None}},
+                {'included': True, 'owner': {'name': 'third'}},
+            ]
+        }
+
+    def _functions(self):
+        class CountedFunctions(jmespath.functions.Functions):
+            def __init__(self):
+                self.left_calls = 0
+                self.right_calls = 0
+
+            @jmespath.functions.signature({'types': []})
+            def _func_probe_left(self, value):
+                self.left_calls += 1
+                return value
+
+            @jmespath.functions.signature({'types': []})
+            def _func_probe_right(self, value):
+                self.right_calls += 1
+                return value
+
+        return CountedFunctions()
+
+    def test_trace_explains_missing_null_and_filter(self):
+        functions = self._functions()
+        options = jmespath.Options(custom_functions=functions)
+        result, events = jmespath.search_with_trace(
+            self.EXPRESSION, self.data, options=options)
+
+        self.assertEqual(result, [
+            'first', 'second', 'third',
+        ])
+        self.assertEqual(
+            [event['type'] for event in events],
+            ['filter_not_passed', 'explicit_null', 'missing_field'])
+        self.assertEqual(
+            [event['input_path'] for event in events],
+            ['$.items[1]', '$.items[3].owner.name', '$.items[4].active'])
+        self.assertEqual(events[1]['field'], 'name')
+        self.assertEqual(events[2]['field'], 'active')
+        self.assertTrue(all(
+            0 <= event['expression_start'] <= event['expression_end']
+            <= len(self.EXPRESSION)
+            for event in events
+            if event['type'] != 'trace_truncated'))
+        self.assertEqual(functions.left_calls, 5)
+        self.assertEqual(functions.right_calls, 3)
+        for event in events:
+            self.assertNotIn('value', event)
+            self.assertNotIn('first', event.values())
+            self.assertNotIn('filtered', event.values())
+
+    def test_trace_does_not_add_function_calls_or_change_result(self):
+        normal_functions = self._functions()
+        normal_options = jmespath.Options(custom_functions=normal_functions)
+        normal_result = jmespath.search(
+            self.EXPRESSION, self.data, options=normal_options)
+
+        traced_functions = self._functions()
+        traced_options = jmespath.Options(custom_functions=traced_functions)
+        traced_result, _ = jmespath.search_with_trace(
+            self.EXPRESSION, self.data, options=traced_options)
+
+        self.assertEqual(traced_result, normal_result)
+        self.assertEqual(
+            traced_functions.left_calls, normal_functions.left_calls)
+        self.assertEqual(
+            traced_functions.right_calls, normal_functions.right_calls)
+        self.assertEqual(traced_functions.left_calls, 5)
+        self.assertEqual(traced_functions.right_calls, 3)
+
+    def test_trace_truncation_does_not_change_execution(self):
+        functions = self._functions()
+        options = jmespath.Options(custom_functions=functions)
+        result, events = jmespath.search_with_trace(
+            self.EXPRESSION, self.data, options=options, trace_limit=2)
+
+        self.assertEqual(result, [
+            'first', 'second', 'third',
+        ])
+        self.assertEqual(len(events), 3)
+        self.assertEqual(events[-1]['type'], 'trace_truncated')
+        self.assertEqual(functions.left_calls, 5)
+        self.assertEqual(functions.right_calls, 3)

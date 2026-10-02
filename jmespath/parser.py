@@ -73,15 +73,19 @@ class Parser(object):
     _CACHE = {}
     _MAX_SIZE = 512
 
-    def __init__(self, lookahead=2):
+    def __init__(self, lookahead=2, enable_locations=False):
         self.tokenizer = None
         self._tokens = [None] * lookahead
         self._buffer_size = lookahead
         self._index = 0
+        self._enable_locations = enable_locations
 
     def parse(self, expression):
+        cache_key = expression
+        if self._enable_locations:
+            cache_key = (expression, True)
         try:
-            return self._CACHE[expression]
+            return self._CACHE[cache_key]
         except KeyError:
             pass
         parsed_result = self._do_parse(expression)
@@ -99,7 +103,7 @@ class Parser(object):
                 # an element from the cache, otherwise this can grow
                 # unbounded.
                 return parsed_result
-        self._CACHE[expression] = parsed_result
+        self._CACHE[cache_key] = parsed_result
         return parsed_result
 
     def _do_parse(self, expression):
@@ -124,7 +128,7 @@ class Parser(object):
             t = self._lookahead_token(0)
             raise exceptions.ParseError(t['start'], t['value'], t['type'],
                                         "Unexpected token: %s" % t['value'])
-        return ParsedResult(expression, parsed)
+        return ParsedResult(expression, parsed, self._enable_locations)
 
     def _expression(self, binding_power=0):
         left_token = self._lookahead_token(0)
@@ -149,10 +153,13 @@ class Parser(object):
         return ast.literal(token['value'])
 
     def _token_nud_unquoted_identifier(self, token):
-        return ast.field(token['value'])
+        node = ast.field(token['value'])
+        self._add_location(node, token)
+        return node
 
     def _token_nud_quoted_identifier(self, token):
         field = ast.field(token['value'])
+        self._add_location(field, token)
         # You can't have a quoted identifier as a function
         # name.
         if self._current_token() == 'lparen':
@@ -248,7 +255,9 @@ class Parser(object):
         return ast.slice(*parts)
 
     def _token_nud_current(self, token):
-        return ast.current_node()
+        node = ast.current_node()
+        self._add_location(node, token)
+        return node
 
     def _token_nud_expref(self, token):
         expression = self._expression(self.BINDING_POWER['expref'])
@@ -292,18 +301,27 @@ class Parser(object):
                 "Invalid function name '%s'" % prev_t['value'])
         name = left['value']
         args = []
+        function_node = ast.function_expression(name, args)
         while not self._current_token() == 'rparen':
             expression = self._expression()
             if self._current_token() == 'comma':
                 self._match('comma')
             args.append(expression)
+        if self._enable_locations:
+            end = self._lookahead_token(0)['end']
+            function_node['start'] = left.get('start', 0)
+            function_node['end'] = end
         self._match('rparen')
-        function_node = ast.function_expression(name, args)
         return function_node
 
     def _token_led_filter(self, left):
         # Filters are projections.
+        condition_start = self._lookahead_token(0)
         condition = self._expression(0)
+        condition_end = self._lookahead_token(-1)
+        if self._enable_locations:
+            condition.setdefault('start', condition_start['start'])
+            condition.setdefault('end', condition_end['end'])
         self._match('rbracket')
         if self._current_token() == 'flatten':
             right = ast.identity()
@@ -365,7 +383,21 @@ class Parser(object):
 
     def _parse_comparator(self, left, comparator):
         right = self._expression(self.BINDING_POWER[comparator])
-        return ast.comparator(comparator, left, right)
+        node = ast.comparator(comparator, left, right)
+        if self._enable_locations:
+            node['start'] = self._location_start(left)
+            node['end'] = self._lookahead_token(-1)['end']
+        return node
+
+    def _add_location(self, node, token):
+        if self._enable_locations:
+            node['start'] = token['start']
+            node['end'] = token['end']
+
+    def _location_start(self, node):
+        while 'start' not in node and node.get('children'):
+            node = node['children'][0]
+        return node.get('start', 0)
 
     def _parse_multi_select_list(self):
         expressions = []
@@ -507,14 +539,25 @@ class Parser(object):
 
 @with_repr_method
 class ParsedResult(object):
-    def __init__(self, expression, parsed):
+    def __init__(self, expression, parsed, locations_enabled=False):
         self.expression = expression
         self.parsed = parsed
+        self.locations_enabled = locations_enabled
 
     def search(self, value, options=None):
         interpreter = visitor.TreeInterpreter(options)
         result = interpreter.visit(self.parsed, value)
         return result
+
+    def search_with_trace(self, value, options=None, trace_limit=100):
+        from jmespath.trace import TracingTreeInterpreter
+        if self.locations_enabled:
+            parsed = self.parsed
+        else:
+            parsed = Parser(enable_locations=True).parse(self.expression).parsed
+        interpreter = TracingTreeInterpreter(options, trace_limit)
+        result = interpreter.visit(parsed, value)
+        return result, interpreter.events
 
     def _render_dot_file(self):
         """Render the parsed AST as a dot file.
