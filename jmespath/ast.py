@@ -66,6 +66,10 @@ def and_expression(left, right):
     return {"type": "and_expression", "children": [left, right]}
 
 
+def bind_parameter(name):
+    return {"type": "bindparameter", "children": [], "value": name}
+
+
 def not_expression(expr):
     return {"type": "not_expression", "children": [expr]}
 

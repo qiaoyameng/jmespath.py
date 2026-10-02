@@ -79,6 +79,38 @@ This is useful if you're going to use the same jmespath expression to
 search multiple documents.  This avoids having to reparse the
 JMESPath expression each time you search a new document.
 
+Named Bindings
+--------------
+
+When a value such as a filter threshold comes from untrusted input,
+concatenating it into the expression string requires careful quoting.
+Instead, refer to a named parameter in the expression using ``$name``
+syntax and provide its value with the ``bindings`` argument.  Bound
+values are treated strictly as data: they are never lexed or parsed as
+part of the expression, so strings containing quotes, backticks or any
+other character can be passed through verbatim:
+
+.. code:: python
+
+    >>> import jmespath
+    >>> expression = jmespath.compile('[?tenant == $tenant && usage > $limit]')
+    >>> expression.search(
+    ...     [{'tenant': 'ac"me', 'usage': 50}, {'tenant': 'other', 'usage': 1}],
+    ...     bindings={'tenant': 'ac"me', 'limit': 20})
+    [{'tenant': 'ac"me', 'usage': 50}]
+    >>> expression.search(
+    ...     [{'tenant': 'q`uote', 'usage': 99}],
+    ...     bindings={'tenant': 'q`uote', 'limit': 40})
+    [{'tenant': 'q`uote', 'usage': 99}]
+
+Bindings apply only to a single ``search`` call; a compiled expression
+can be reused with different bindings.  Referencing a parameter that was
+not bound raises ``jmespath.exceptions.UndefinedBindingError``; binding
+a name to ``None`` is valid and is distinct from omitting the binding.
+Parameter names live in a separate namespace from field names, so a
+parameter named ``$tenant`` never reads a ``tenant`` key out of the
+data, and a ``tenant`` field expression never reads a binding.
+
 Options
 -------
 

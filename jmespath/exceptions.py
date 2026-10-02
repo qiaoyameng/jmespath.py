@@ -120,3 +120,13 @@ class EmptyExpressionError(JMESPathError):
 
 class UnknownFunctionError(JMESPathError):
     pass
+
+
+@with_str_method
+class UndefinedBindingError(JMESPathError):
+    def __init__(self, binding_name):
+        self.binding_name = binding_name
+
+    def __str__(self):
+        return 'No binding provided for named parameter: "$%s"' % (
+            self.binding_name)

@@ -80,6 +80,8 @@ class Lexer(object):
                                      message="Unknown token '%s'" % buff)
             elif self._current == '"':
                 yield self._consume_quoted_identifier()
+            elif self._current == '$':
+                yield self._consume_bind_parameter()
             elif self._current == '<':
                 yield self._match_or_else('=', 'lte', 'lt')
             elif self._current == '>':
@@ -195,6 +197,21 @@ class Lexer(object):
         token_len = self._position - start
         return {'type': 'literal', 'value': lexeme,
                 'start': start, 'end': token_len}
+
+    def _consume_bind_parameter(self):
+        start = self._position
+        first = self._next()
+        if first not in self.START_IDENTIFIER:
+            raise LexerError(
+                lexer_position=start,
+                lexer_value=self._expression[start:],
+                message="Parameter name expected after '$'")
+        name = first
+        while self._next() in self.VALID_IDENTIFIER:
+            name += self._current
+        token_len = self._position - start
+        return {'type': 'bindparameter', 'value': name,
+                'start': start, 'end': start + token_len}
 
     def _match_or_else(self, expected, match_type, else_type):
         start = self._position

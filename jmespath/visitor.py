@@ -1,6 +1,7 @@
 import operator
 
 from jmespath import functions
+from jmespath import exceptions
 from jmespath.compat import string_type
 from numbers import Number
 
@@ -109,9 +110,13 @@ class TreeInterpreter(Visitor):
     _EQUALITY_OPS = ['eq', 'ne']
     MAP_TYPE = dict
 
-    def __init__(self, options=None):
+    def __init__(self, options=None, bindings=None):
         super(TreeInterpreter, self).__init__()
         self._dict_cls = self.MAP_TYPE
+        # Bindings are execution scoped: a new TreeInterpreter is created
+        # for each search() call, and the bound values are passed in as
+        # data rather than re-parsed as expressions.
+        self._bindings = bindings if bindings is not None else {}
         if options is None:
             options = Options()
         self._options = options
@@ -136,6 +141,16 @@ class TreeInterpreter(Visitor):
             return value.get(node['value'])
         except AttributeError:
             return None
+
+    def visit_bindparameter(self, node, value):
+        name = node['value']
+        # Parameter names live in a separate namespace from field names,
+        # so a binding is never resolved as a data access, and a missing
+        # binding must not be confused with an explicit null value.
+        try:
+            return self._bindings[name]
+        except KeyError:
+            raise exceptions.UndefinedBindingError(name)
 
     def visit_comparator(self, node, value):
         # Common case: comparator is == or !=

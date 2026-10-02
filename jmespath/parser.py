@@ -37,6 +37,7 @@ class Parser(object):
         'eof': 0,
         'unquoted_identifier': 0,
         'quoted_identifier': 0,
+        'bindparameter': 0,
         'literal': 0,
         'rbracket': 0,
         'rparen': 0,
@@ -161,6 +162,9 @@ class Parser(object):
                 0, t['value'], t['type'],
                 'Quoted identifier not allowed for function names.')
         return field
+
+    def _token_nud_bindparameter(self, token):
+        return ast.bind_parameter(token['value'])
 
     def _token_nud_star(self, token):
         left = ast.identity()
@@ -511,8 +515,8 @@ class ParsedResult(object):
         self.expression = expression
         self.parsed = parsed
 
-    def search(self, value, options=None):
-        interpreter = visitor.TreeInterpreter(options)
+    def search(self, value, options=None, bindings=None):
+        interpreter = visitor.TreeInterpreter(options, bindings=bindings)
         result = interpreter.visit(self.parsed, value)
         return result
 
