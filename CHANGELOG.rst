@@ -1,7 +1,14 @@
 Next Release (TBD)
 ==================
 
-* No changes yet.
+* Added optional query tracing via ``jmespath.search_traced()`` and
+  ``ParsedResult.search_traced()``.  Traced queries return a
+  ``TraceResult`` pairing the normal query result with a bounded list
+  of events that explain why elements are absent from the result
+  (missing fields, explicit nulls, filter rejections and projection
+  omissions).  Events record the input path and expression position
+  without embedding data values, and tracing never re-executes
+  functions or short-circuited expressions.
 
 
 1.1.0

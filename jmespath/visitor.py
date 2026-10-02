@@ -109,12 +109,15 @@ class TreeInterpreter(Visitor):
     _EQUALITY_OPS = ['eq', 'ne']
     MAP_TYPE = dict
 
-    def __init__(self, options=None):
+    def __init__(self, options=None, tracer=None):
         super(TreeInterpreter, self).__init__()
         self._dict_cls = self.MAP_TYPE
         if options is None:
             options = Options()
         self._options = options
+        self._tracer = tracer
+        self._path = []
+        self._expression_path = []
         if options.dict_cls is not None:
             self._dict_cls = self._options.dict_cls
         if options.custom_functions is not None:
@@ -122,19 +125,105 @@ class TreeInterpreter(Visitor):
         else:
             self._functions = functions.Functions()
 
+    def visit(self, node, *args, **kwargs):
+        if self._tracer is None:
+            return super(TreeInterpreter, self).visit(node, *args, **kwargs)
+        self._expression_path.append(self._describe_node(node))
+        try:
+            return super(TreeInterpreter, self).visit(node, *args, **kwargs)
+        finally:
+            self._expression_path.pop()
+
+    def _describe_node(self, node):
+        # Literal values are deliberately excluded so that trace events
+        # never embed potentially sensitive data.
+        node_type = node['type']
+        if node_type in ('field', 'index', 'function_expression',
+                         'comparator', 'key_val_pair'):
+            return '%s:%s' % (node_type, node.get('value'))
+        return node_type
+
+    def _push_path(self, segment):
+        if self._tracer is not None:
+            self._path.append(segment)
+
+    def _pop_path(self):
+        if self._tracer is not None:
+            self._path.pop()
+
+    def _mark_path(self):
+        if self._tracer is not None:
+            return len(self._path)
+        return None
+
+    def _restore_path(self, mark):
+        if mark is not None:
+            del self._path[mark:]
+
+    def _track_path(self, node):
+        # Statically extend the input path based on a node that was
+        # just evaluated.  Only nodes that navigate to a location in
+        # the input document contribute a path segment.  This never
+        # re-evaluates anything, it only inspects the AST.
+        if self._tracer is None:
+            return
+        node_type = node['type']
+        if node_type == 'field':
+            self._path.append(node['value'])
+        elif node_type == 'index':
+            self._path.append(node['value'])
+        elif node_type in ('subexpression', 'index_expression', 'pipe',
+                           'flatten'):
+            for child in node['children']:
+                self._track_path(child)
+
+    def _record_event(self, kind, path, detail):
+        self._tracer.record(kind, path, self._expression_path, detail)
+
     def default_visit(self, node, *args, **kwargs):
         raise NotImplementedError(node['type'])
 
     def visit_subexpression(self, node, value):
-        result = value
-        for node in node['children']:
-            result = self.visit(node, result)
-        return result
+        mark = self._mark_path()
+        try:
+            result = value
+            for child in node['children']:
+                result = self.visit(child, result)
+                self._track_path(child)
+            return result
+        finally:
+            self._restore_path(mark)
 
     def visit_field(self, node, value):
+        if self._tracer is not None:
+            return self._traced_field(node, value)
         try:
             return value.get(node['value'])
         except AttributeError:
+            return None
+
+    def _traced_field(self, node, value):
+        name = node['value']
+        path = self._path + [name]
+        if isinstance(value, dict):
+            if name not in value:
+                self._record_event(
+                    'missing_field', path,
+                    'key %r is not present' % name)
+                return None
+            result = value.get(name)
+            if result is None:
+                self._record_event(
+                    'explicit_null', path,
+                    'field %r is explicitly null' % name)
+            return result
+        try:
+            return value.get(name)
+        except AttributeError:
+            self._record_event(
+                'missing_field', path,
+                'cannot access field %r on type %r'
+                % (name, type(value).__name__))
             return None
 
     def visit_comparator(self, node, value):
@@ -171,17 +260,34 @@ class TreeInterpreter(Visitor):
         return self._functions.call_function(node['value'], resolved_args)
 
     def visit_filter_projection(self, node, value):
-        base = self.visit(node['children'][0], value)
-        if not isinstance(base, list):
-            return None
-        comparator_node = node['children'][2]
-        collected = []
-        for element in base:
-            if self._is_true(self.visit(comparator_node, element)):
-                current = self.visit(node['children'][1], element)
-                if current is not None:
-                    collected.append(current)
-        return collected
+        mark = self._mark_path()
+        try:
+            base = self.visit(node['children'][0], value)
+            self._track_path(node['children'][0])
+            if not isinstance(base, list):
+                return None
+            comparator_node = node['children'][2]
+            collected = []
+            for i, element in enumerate(base):
+                self._push_path(i)
+                if self._is_true(self.visit(comparator_node, element)):
+                    current = self.visit(node['children'][1], element)
+                    if current is not None:
+                        collected.append(current)
+                    elif self._tracer is not None:
+                        self._record_event(
+                            'omitted', list(self._path),
+                            'element was omitted from the projection '
+                            'because it evaluated to null')
+                elif self._tracer is not None:
+                    self._record_event(
+                        'filter_excluded', list(self._path),
+                        'element was excluded because the filter '
+                        'expression evaluated to false')
+                self._pop_path()
+            return collected
+        finally:
+            self._restore_path(mark)
 
     def visit_flatten(self, node, value):
         base = self.visit(node['children'][0], value)
@@ -210,10 +316,15 @@ class TreeInterpreter(Visitor):
             return None
 
     def visit_index_expression(self, node, value):
-        result = value
-        for node in node['children']:
-            result = self.visit(node, result)
-        return result
+        mark = self._mark_path()
+        try:
+            result = value
+            for child in node['children']:
+                result = self.visit(child, result)
+                self._track_path(child)
+            return result
+        finally:
+            self._restore_path(mark)
 
     def visit_slice(self, node, value):
         if not isinstance(value, list):
@@ -264,34 +375,72 @@ class TreeInterpreter(Visitor):
         return not original_result
 
     def visit_pipe(self, node, value):
-        result = value
-        for node in node['children']:
-            result = self.visit(node, result)
-        return result
+        mark = self._mark_path()
+        try:
+            result = value
+            for child in node['children']:
+                result = self.visit(child, result)
+                self._track_path(child)
+            return result
+        finally:
+            self._restore_path(mark)
 
     def visit_projection(self, node, value):
-        base = self.visit(node['children'][0], value)
-        if not isinstance(base, list):
-            return None
-        collected = []
-        for element in base:
-            current = self.visit(node['children'][1], element)
-            if current is not None:
-                collected.append(current)
-        return collected
+        mark = self._mark_path()
+        try:
+            base = self.visit(node['children'][0], value)
+            self._track_path(node['children'][0])
+            if not isinstance(base, list):
+                return None
+            collected = []
+            for i, element in enumerate(base):
+                self._push_path(i)
+                current = self.visit(node['children'][1], element)
+                if current is not None:
+                    collected.append(current)
+                elif self._tracer is not None:
+                    self._record_event(
+                        'omitted', list(self._path),
+                        'element was omitted from the projection '
+                        'because it evaluated to null')
+                self._pop_path()
+            return collected
+        finally:
+            self._restore_path(mark)
 
     def visit_value_projection(self, node, value):
-        base = self.visit(node['children'][0], value)
+        mark = self._mark_path()
         try:
-            base = base.values()
-        except AttributeError:
-            return None
-        collected = []
-        for element in base:
-            current = self.visit(node['children'][1], element)
-            if current is not None:
-                collected.append(current)
-        return collected
+            base = self.visit(node['children'][0], value)
+            self._track_path(node['children'][0])
+            try:
+                if self._tracer is not None:
+                    base = base.items()
+                else:
+                    base = base.values()
+            except AttributeError:
+                return None
+            collected = []
+            if self._tracer is not None:
+                for key, element in base:
+                    self._push_path(key)
+                    current = self.visit(node['children'][1], element)
+                    if current is not None:
+                        collected.append(current)
+                    else:
+                        self._record_event(
+                            'omitted', list(self._path),
+                            'element was omitted from the projection '
+                            'because it evaluated to null')
+                    self._pop_path()
+            else:
+                for element in base:
+                    current = self.visit(node['children'][1], element)
+                    if current is not None:
+                        collected.append(current)
+            return collected
+        finally:
+            self._restore_path(mark)
 
     def _is_false(self, value):
         # This looks weird, but we're explicitly using equality checks

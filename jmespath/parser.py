@@ -29,6 +29,7 @@ from jmespath import lexer
 from jmespath.compat import with_repr_method
 from jmespath import ast
 from jmespath import exceptions
+from jmespath import tracing
 from jmespath import visitor
 
 
@@ -515,6 +516,22 @@ class ParsedResult(object):
         interpreter = visitor.TreeInterpreter(options)
         result = interpreter.visit(self.parsed, value)
         return result
+
+    def search_traced(self, value, options=None,
+                      max_events=tracing.Tracer.DEFAULT_MAX_EVENTS):
+        """Evaluate the expression and explain missing results.
+
+        Returns a :class:`jmespath.tracing.TraceResult` whose
+        ``result`` attribute is identical to what ``search()`` would
+        return, and whose ``events`` attribute lists why elements were
+        absent from the result (missing fields, explicit nulls, filter
+        rejections, projection omissions).  At most ``max_events``
+        events are recorded; pass ``None`` for no limit.
+        """
+        tracer = tracing.Tracer(max_events=max_events)
+        interpreter = visitor.TreeInterpreter(options, tracer=tracer)
+        result = interpreter.visit(self.parsed, value)
+        return tracing.TraceResult(result, tracer.events, tracer.truncated)
 
     def _render_dot_file(self):
         """Render the parsed AST as a dot file.
